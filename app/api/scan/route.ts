@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ScanRequestSchema } from "@/lib/schema";
-import { analyzeWithClaude, AiUnavailableError } from "@/lib/ai";
+import { analyze, AiUnavailableError } from "@/lib/ai";
 import { analyzeHeaders } from "@/lib/forensics/headers";
 import { analyzeLinks } from "@/lib/forensics/links";
 import { youngDomainSignals } from "@/lib/forensics/rdap";
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
 
   // AI analysis and RDAP lookups run concurrently; both degrade gracefully.
   const [aiResult, domainSignals] = await Promise.all([
-    analyzeWithClaude({ content, imageBase64, imageMediaType })
+    analyze({ content, imageBase64, imageMediaType })
       .then((ai) => ({ ai, notice: null as string | null }))
       .catch((error) => {
         if (error instanceof AiUnavailableError) {
