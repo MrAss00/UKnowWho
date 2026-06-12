@@ -1,4 +1,3 @@
-import OpenAI from "openai";
 import { ScamCategorySchema, type AiAnalysis } from "@/lib/schema";
 import {
   AiUnavailableError,
@@ -10,6 +9,7 @@ import {
 
 const MODEL = process.env.UKNOWWHO_DEEPSEEK_MODEL ?? "deepseek-chat";
 const BASE_URL = process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com";
+const TIMEOUT_MS = 30_000;
 
 const CATEGORIES = ScamCategorySchema.options.join(" | ");
 
@@ -29,6 +29,15 @@ const JSON_INSTRUCTIONS = `Respond with ONLY a single JSON object (no markdown, 
 }
 Use an empty array for red_flags if there are none.`;
 
+interface ChatCompletion {
+  choices?: Array<{ message?: { content?: string } }>;
+}
+
+/**
+ * DeepSeek exposes an OpenAI-compatible Chat Completions endpoint. We call it
+ * with a direct fetch rather than the OpenAI SDK to avoid pulling that
+ * package (and its optional `ws` peer dependency) into the bundle.
+ */
 export async function analyzeWithDeepSeek(
   input: AnalyzeInput,
 ): Promise<AiAnalysis> {
@@ -38,45 +47,60 @@ export async function analyzeWithDeepSeek(
     );
   }
 
-  const client = new OpenAI({
-    apiKey: process.env.DEEPSEEK_API_KEY,
-    baseURL: BASE_URL,
-  });
-
+  let response: Response;
   try {
-    const response = await client.chat.completions.create({
-      model: MODEL,
-      max_tokens: 4096,
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: `${SYSTEM_PROMPT}\n\n${JSON_INSTRUCTIONS}` },
-        { role: "user", content: userPrompt(input.content) },
-      ],
+    response = await fetch(`${BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 4096,
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `${SYSTEM_PROMPT}\n\n${JSON_INSTRUCTIONS}`,
+          },
+          { role: "user", content: userPrompt(input.content) },
+        ],
+      }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
     });
+  } catch {
+    throw new AiUnavailableError(
+      "Couldn't reach DeepSeek — deterministic forensics only.",
+    );
+  }
 
-    const text = response.choices[0]?.message?.content;
-    if (!text) {
-      throw new AiUnavailableError("DeepSeek returned an empty response.");
-    }
-    return parseAnalysisJson(text);
-  } catch (error) {
-    if (error instanceof AiUnavailableError) throw error;
-    if (error instanceof OpenAI.AuthenticationError) {
+  if (!response.ok) {
+    if (response.status === 401) {
       throw new AiUnavailableError(
         "Invalid DEEPSEEK_API_KEY — AI analysis skipped.",
       );
     }
-    if (error instanceof OpenAI.RateLimitError) {
+    if (response.status === 402) {
       throw new AiUnavailableError(
-        "DeepSeek rate limit or insufficient balance — try again later.",
+        "DeepSeek account has insufficient balance — AI analysis skipped.",
       );
     }
-    if (error instanceof OpenAI.APIError) {
+    if (response.status === 429) {
       throw new AiUnavailableError(
-        `DeepSeek service error (${error.status ?? "unknown"}) — deterministic forensics only.`,
+        "DeepSeek rate limit reached — try again in a moment.",
       );
     }
-    throw error;
+    throw new AiUnavailableError(
+      `DeepSeek service error (${response.status}) — deterministic forensics only.`,
+    );
   }
+
+  const data = (await response.json()) as ChatCompletion;
+  const text = data.choices?.[0]?.message?.content;
+  if (!text) {
+    throw new AiUnavailableError("DeepSeek returned an empty response.");
+  }
+  return parseAnalysisJson(text);
 }
