@@ -43,7 +43,7 @@ npm run dev                  # http://localhost:3000
 Without a key the app still runs — scans return deterministic forensics only, with a notice that AI analysis was skipped.
 
 ```bash
-npm test            # 31 unit tests for the forensics engine
+npm test            # unit tests (forensics + AI parser) and Scanner UI tests
 npm run lint        # ESLint
 npm run typecheck   # tsc --noEmit
 npm run build       # production build

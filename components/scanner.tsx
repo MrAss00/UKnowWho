@@ -19,7 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ReportView } from "@/components/report-view";
-import { SAMPLES } from "@/lib/samples";
+import { SAMPLES, type InputMode } from "@/lib/samples";
 import type { RiskReport, Verdict } from "@/lib/schema";
 import { cn } from "@/lib/utils";
 
@@ -48,8 +48,9 @@ type ImageAttachment = {
 };
 
 export function Scanner() {
-  const [content, setContent] = useState("");
-  const [rawHeaders, setRawHeaders] = useState("");
+  const [mode, setMode] = useState<InputMode>("message");
+  // Shared by the "message" and "headers" modes — both are plain textareas.
+  const [text, setText] = useState("");
   const [image, setImage] = useState<ImageAttachment | null>(null);
   const [report, setReport] = useState<RiskReport | null>(null);
   const [loading, setLoading] = useState(false);
@@ -78,6 +79,26 @@ export function Scanner() {
     }
   }, []);
 
+  /** Reset every input field so each scan uses exactly one method. */
+  const clearInputs = useCallback(() => {
+    setText("");
+    setImage(null);
+    setError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, []);
+
+  /** Switching the input method clears the other methods' data. */
+  const changeMode = useCallback(
+    (next: string) => {
+      if (next === mode) return;
+      setMode(next as InputMode);
+      clearInputs();
+    },
+    [mode, clearInputs],
+  );
+
+  const hasInput = mode === "screenshot" ? image !== null : text.trim() !== "";
+
   const handleFile = (file: File | undefined) => {
     if (!file) return;
     if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) {
@@ -102,11 +123,38 @@ export function Scanner() {
   };
 
   const scan = async () => {
-    const trimmed = content.trim();
-    if (!trimmed && !image) {
-      setError("Paste a message or add a screenshot first.");
+    const trimmed = text.trim();
+    if (mode === "screenshot" && !image) {
+      setError("Add a screenshot first.");
       return;
     }
+    if (mode !== "screenshot" && !trimmed) {
+      setError(
+        mode === "headers"
+          ? "Paste the raw email (headers and body) first."
+          : "Paste a message first.",
+      );
+      return;
+    }
+
+    // Build the request from the active mode only.
+    const payload: {
+      content: string;
+      rawHeaders?: string;
+      imageBase64?: string;
+      imageMediaType?: ImageAttachment["mediaType"];
+    } =
+      mode === "screenshot"
+        ? {
+            content:
+              "(screenshot only — read the text from the attached image)",
+            imageBase64: image!.base64,
+            imageMediaType: image!.mediaType,
+          }
+        : mode === "headers"
+          ? { content: trimmed, rawHeaders: trimmed }
+          : { content: trimmed };
+
     setLoading(true);
     setError(null);
     setReport(null);
@@ -114,12 +162,7 @@ export function Scanner() {
       const response = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: trimmed || "(screenshot only — read the text from the attached image)",
-          rawHeaders: rawHeaders.trim() || undefined,
-          imageBase64: image?.base64,
-          imageMediaType: image?.mediaType,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -141,7 +184,10 @@ export function Scanner() {
         ].slice(0, MAX_HISTORY),
       );
       requestAnimationFrame(() =>
-        resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+        resultsRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        }),
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
@@ -153,18 +199,26 @@ export function Scanner() {
   const loadSample = (sampleId: string) => {
     const sample = SAMPLES.find((s) => s.id === sampleId);
     if (!sample) return;
-    setContent(sample.content);
-    setRawHeaders(sample.rawHeaders ?? "");
+    setMode(sample.mode);
+    setText(sample.text);
     setImage(null);
-    setReport(null);
     setError(null);
+    setReport(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const onTextKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !loading) {
+      e.preventDefault();
+      void scan();
+    }
   };
 
   return (
     <div className="flex w-full flex-col gap-6">
       <Card>
         <CardContent className="flex flex-col gap-4 pt-6">
-          <Tabs defaultValue="message">
+          <Tabs value={mode} onValueChange={changeMode}>
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="message" className="gap-1.5">
                 <MessageSquareText className="h-3.5 w-3.5" />
@@ -182,8 +236,9 @@ export function Scanner() {
 
             <TabsContent value="message" className="mt-4">
               <Textarea
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={onTextKeyDown}
                 placeholder="Paste the suspicious email, text message, DM, or job offer here…"
                 className="min-h-44 resize-y font-mono text-sm"
               />
@@ -191,21 +246,26 @@ export function Scanner() {
 
             <TabsContent value="headers" className="mt-4 flex flex-col gap-2">
               <p className="text-muted-foreground text-xs">
-                Optional: paste the raw email headers (in Gmail: ⋮ → Show
-                original) to check SPF/DKIM/DMARC and sender spoofing.
+                Paste the full raw email — headers and body (in Gmail: ⋮ → Show
+                original). We verify SPF/DKIM/DMARC and check for sender
+                spoofing on top of the normal analysis.
               </p>
               <Textarea
-                value={rawHeaders}
-                onChange={(e) => setRawHeaders(e.target.value)}
-                placeholder={"From: …\nReply-To: …\nAuthentication-Results: …"}
-                className="min-h-36 resize-y font-mono text-xs"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={onTextKeyDown}
+                placeholder={
+                  "From: …\nReply-To: …\nAuthentication-Results: …\n\n(message body)"
+                }
+                className="min-h-44 resize-y font-mono text-xs"
               />
             </TabsContent>
 
             <TabsContent value="screenshot" className="mt-4 flex flex-col gap-3">
               <p className="text-muted-foreground text-xs">
                 Upload a screenshot of the chat or profile — the AI reads the
-                text straight from the image.
+                text straight from the image. (Requires an Anthropic key;
+                DeepSeek is text-only.)
               </p>
               <input
                 ref={fileInputRef}
@@ -265,7 +325,12 @@ export function Scanner() {
           )}
 
           <div className="flex items-center gap-3">
-            <Button onClick={scan} disabled={loading} className="gap-2" size="lg">
+            <Button
+              onClick={scan}
+              disabled={loading || !hasInput}
+              className="gap-2"
+              size="lg"
+            >
               {loading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
@@ -273,11 +338,16 @@ export function Scanner() {
               )}
               {loading ? "Analyzing…" : "Scan it"}
             </Button>
+            {hasInput && !loading && (
+              <Button variant="ghost" size="sm" onClick={clearInputs}>
+                Clear
+              </Button>
+            )}
             {history.length > 0 && (
               <Button
                 variant="ghost"
                 size="sm"
-                className="gap-1.5"
+                className="ml-auto gap-1.5"
                 onClick={() => setShowHistory((v) => !v)}
               >
                 <History className="h-4 w-4" />

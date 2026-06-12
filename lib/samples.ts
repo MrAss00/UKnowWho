@@ -1,9 +1,11 @@
+export type InputMode = "message" | "headers" | "screenshot";
+
 export interface Sample {
   id: string;
   label: string;
   description: string;
-  content: string;
-  rawHeaders?: string;
+  mode: Exclude<InputMode, "screenshot">;
+  text: string;
 }
 
 export const SAMPLES: Sample[] = [
@@ -11,7 +13,8 @@ export const SAMPLES: Sample[] = [
     id: "phishing-bank",
     label: "Bank phishing email",
     description: "Credential-harvesting email with a lookalike link",
-    content: `Subject: URGENT: Your account has been temporarily suspended
+    mode: "message",
+    text: `Subject: URGENT: Your account has been temporarily suspended
 
 Dear Valued Customer,
 
@@ -30,27 +33,31 @@ Account Security Team`,
     id: "smishing-delivery",
     label: "Delivery scam text",
     description: "SMS with a fake customs fee and shortened link",
-    content: `[Delivery Notice] Your parcel UK-7731 is held at our facility due to an unpaid customs fee of $1.99. To avoid return to sender, settle the fee within 12 hours: https://bit.ly/3xk9pZq — Customer Care`,
+    mode: "message",
+    text: `[Delivery Notice] Your parcel UK-7731 is held at our facility due to an unpaid customs fee of $1.99. To avoid return to sender, settle the fee within 12 hours: https://bit.ly/3xk9pZq — Customer Care`,
   },
   {
     id: "ceo-fraud",
     label: "CEO impersonation",
-    description: "Classic wire-transfer fraud with spoofed headers",
-    content: `Hi, are you at your desk? I need you to process an urgent vendor payment before end of day. I'm heading into a board meeting and can't talk, so handle this by email only. The amount is $24,800 — I'll send the account details once you confirm. Keep this between us for now, it relates to a confidential acquisition.
-
-Sent from my iPhone`,
-    rawHeaders: `From: "Margaret Chen, CEO" <m.chen@acme-corp.com>
+    description: "Wire-transfer fraud — paste of a full raw email with spoofed headers",
+    mode: "headers",
+    text: `From: "Margaret Chen, CEO" <m.chen@acme-corp.com>
 Reply-To: <margaret.chen.ceo@secure-mail-office.live>
 Return-Path: <bounce@mailblast-7.xyz>
 Authentication-Results: mx.acme-corp.com; spf=fail smtp.mailfrom=mailblast-7.xyz; dkim=none; dmarc=fail header.from=acme-corp.com
 Date: Thu, 12 Jun 2026 09:14:22 +0000
-Subject: Quick task - confidential`,
+Subject: Quick task - confidential
+
+Hi, are you at your desk? I need you to process an urgent vendor payment before end of day. I'm heading into a board meeting and can't talk, so handle this by email only. The amount is $24,800 — I'll send the account details once you confirm. Keep this between us for now, it relates to a confidential acquisition.
+
+Sent from my iPhone`,
   },
   {
     id: "legit-receipt",
     label: "Legitimate receipt",
     description: "A normal order confirmation — should score low",
-    content: `Subject: Your order has shipped!
+    mode: "message",
+    text: `Subject: Your order has shipped!
 
 Hi Sam,
 
