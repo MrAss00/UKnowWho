@@ -1,36 +1,92 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🛡️ UKnowWho — know who you're really talking to
 
-## Getting Started
+**AI-powered impersonation & scam detection.** Paste a suspicious email, text, DM, or screenshot and UKnowWho tells you in seconds whether you're talking to who you think you are — with the exact red flags highlighted and advice on what to do next.
 
-First, run the development server:
+Built for the **Vortexa Hackathon 2026** (AI × Cyber Security track).
+
+## The problem
+
+Impersonation fraud — phishing, smishing, CEO fraud, romance and job scams — costs victims tens of billions of dollars every year, and the latest wave is AI-written, typo-free, and convincing. The people most at risk (parents, grandparents, new employees) are exactly the people who can't tell a spoofed `Reply-To` from a real one.
+
+## The solution
+
+UKnowWho gives anyone a fraud analyst in their pocket. It combines **two independent engines**, so the verdict is never just "the AI said so":
+
+1. **AI analysis (Claude)** — a fraud-analyst prompt with structured output classifies the scam type, scores the risk 0–100, extracts every red flag as an exact quote with a plain-language explanation, and produces advice. A "grandma mode" toggle re-explains the verdict in language anyone's grandparent would understand.
+2. **Deterministic forensics (no AI involved)** — pure code that checks hard evidence:
+   - **Email authentication** — SPF / DKIM / DMARC results, `From` vs `Reply-To` vs `Return-Path` mismatches (spoofing & CEO fraud)
+   - **Lookalike domains** — homoglyph normalization (`paypa1` → `paypal`) plus per-segment Levenshtein matching against frequently-impersonated brands
+   - **Link inspection** — URL shorteners, raw-IP links, the `user@host` trick, punycode, abuse-prone TLDs
+   - **Domain age** — live RDAP lookups flag domains registered in the last 90 days
+
+A score blender merges both: hard evidence sets a floor (a spoofed sender is never "safe", however friendly the prose), and signals only push the score up, so clean messages aren't penalized.
+
+## Features
+
+- 📩 **Message scanner** — paste any email/SMS/DM
+- 📬 **Header forensics** — paste raw headers (Gmail: ⋮ → Show original)
+- 🖼️ **Screenshot scan** — upload a chat screenshot; Claude vision reads the text
+- 🧓 **Grandma mode** — the same verdict, explained simply
+- 📤 **Threat card** — copy a shareable summary to warn others
+- 🕘 **Scan history** — stored locally in your browser, never on a server
+- 🧪 **Demo samples** — one-click examples (bank phishing, delivery smishing, CEO fraud, and a legitimate receipt)
+- 🔌 **Graceful degradation** — without an API key the forensics engine still works standalone
+
+## Running it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env.local   # add your ANTHROPIC_API_KEY
+npm run dev                  # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Without a key the app still runs — scans return deterministic forensics only, with a notice that AI analysis was skipped.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm test            # 31 unit tests for the forensics engine
+npm run lint        # ESLint
+npm run typecheck   # tsc --noEmit
+npm run build       # production build
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## API
 
-## Learn More
+`POST /api/scan`
 
-To learn more about Next.js, take a look at the following resources:
+```jsonc
+{
+  "content": "string (required) — the message to analyze",
+  "rawHeaders": "string (optional) — raw RFC 5322 email headers",
+  "imageBase64": "string (optional) — screenshot, base64 without data: prefix",
+  "imageMediaType": "image/png | image/jpeg | image/webp | image/gif"
+}
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Returns a `RiskReport`: blended `risk_score` (0–100), `verdict` (`safe` / `caution` / `dangerous`), the AI analysis (category, confidence, red-flag quotes, advice, grandma summary), and the forensic evidence (signals, per-link findings, parsed auth headers).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Architecture
 
-## Deploy on Vercel
+```
+Browser (Next.js 16 UI — tabs, risk gauge, report cards)
+   │
+   ▼
+POST /api/scan (Route Handler)
+   ├─ Zod input validation
+   ├─ Deterministic layer:  header parser ─ link extractor ─ typosquat check ─ RDAP age
+   ├─ AI layer:             Claude structured output (messages.parse + Zod schema)
+   └─ Score blender         hard-evidence floor → unified RiskReport
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+**Stack:** Next.js 16 (App Router) · TypeScript · Tailwind v4 + shadcn/ui · Anthropic SDK (`claude-sonnet-4-6`, configurable via `UKNOWWHO_MODEL`) · Zod · tldts · Vitest
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Why it scales
+
+The scanner is already an API. The same `/api/scan` endpoint can power a browser extension, a WhatsApp/Telegram bot ("forward a message, get a verdict"), or an enterprise email-gateway hook — with zero re-architecture. The brand list, signal weights, and model are all configuration.
+
+## Team
+
+Built by MrAss00 for Vortexa 2026.
+
+## License
+
+MIT
